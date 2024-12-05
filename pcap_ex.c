@@ -27,9 +27,6 @@ typedef struct flow_key{
     int payload_length;
     const u_char *payload_addr;
     
-    u_int32_t last_seq;
-    u_int32_t last_ack;
-
     int isRet;
 }flow;
 
@@ -44,9 +41,9 @@ typedef struct{
     long udp_bytes;
 }statistics;
 
-statistics stats = {0};
+statistics stats = {0}; //Init stats struct
 
-FILE *fp = NULL;
+FILE *fp = NULL; //Output file pointer
 
 /*****************Functions******************/
 void print_flow(flow *f, FILE* file_p);
@@ -63,8 +60,9 @@ void packet_handler(u_char* user, const struct pcap_pkthdr *header, const u_char
 void help();
 /********************************************/
 
-
-
+/*
+ * Prints flow details
+ */
 void print_flow(flow *f, FILE *file_p) {
     
     if (f == NULL) {
@@ -87,6 +85,9 @@ void print_flow(flow *f, FILE *file_p) {
     fflush(file_p);
 }
 
+/*
+ * Prints stats
+ */
 void print_stats(statistics *stats, FILE* file_p){
     fprintf(file_p,"\n================= Statistics =================\n");
     fprintf(file_p,"Total Flows      : %d\n", stats->total_flows);
@@ -104,6 +105,9 @@ void print_stats(statistics *stats, FILE* file_p){
     fflush(file_p);
 }
 
+/*
+ * Opens pcap file
+ */
 pcap_t *offline_packet_open(char* filename, char* errbuf){
     pcap_t *packet;
     packet = pcap_open_offline(filename, errbuf);
@@ -115,6 +119,9 @@ pcap_t *offline_packet_open(char* filename, char* errbuf){
     return packet;
 }
 
+/*
+ * Opens interface for live monitoring
+ */
 pcap_t *online_packet_open(char* device, char* errbuf){
     pcap_t *packet;
     packet = pcap_open_live(device, 65535, 1, 1000, errbuf);
@@ -125,6 +132,9 @@ pcap_t *online_packet_open(char* device, char* errbuf){
     return packet;
 }
 
+/*
+ * Extracts IPv4 source/destination address and protocol
+ */
 flow *decode_IPV4(struct iphdr *ip_header){
     flow* packet;
 
@@ -147,6 +157,9 @@ flow *decode_IPV4(struct iphdr *ip_header){
     return packet;
 }
 
+/*
+ * Extracts IPv6 source/destination address and protocol
+ */
 flow *decode_IPV6(struct ip6_hdr *ip6_header){
     flow *packet;
     packet = (flow*)malloc(sizeof(flow));
@@ -154,10 +167,8 @@ flow *decode_IPV6(struct ip6_hdr *ip6_header){
     struct in6_addr src_addr = ip6_header->ip6_src;
     struct in6_addr dst_addr = ip6_header->ip6_dst;
 
-    char source[INET6_ADDRSTRLEN];
-    inet_ntop(AF_INET6, &src_addr, source, INET6_ADDRSTRLEN);
-    char destination[INET6_ADDRSTRLEN];
-    inet_ntop(AF_INET6, &dst_addr, destination, INET6_ADDRSTRLEN);
+    inet_ntop(AF_INET6, &src_addr, packet->src_ip, INET6_ADDRSTRLEN);
+    inet_ntop(AF_INET6, &dst_addr, packet->dst_ip, INET6_ADDRSTRLEN);
 
     packet->protocol = ip6_header->ip6_nxt;
 
@@ -169,23 +180,35 @@ flow *decode_IPV6(struct ip6_hdr *ip6_header){
     return packet->isRet;
 } */
 
+/*
+ * Extracts TCP source/destination port, payload length/address, header length
+ * Checks ports for filtering
+ */
 int decode_TCP(struct tcphdr *tcp_header, struct iphdr *ip_header, struct ip6_hdr *ipv6_header, int ip_header_length, flow *packet, const u_char* ptr, int filter){
+    //Get source/destination ports
     packet->src_port = ntohs(tcp_header->source);
     packet->dst_port = ntohs(tcp_header->dest);
 
+    //Calculate header length
     packet->header_length= (unsigned int)tcp_header->doff * 4;
 
     if(ip_header != NULL && ipv6_header == NULL){
-        //printf("\nip4\n");
+        /* for IPv4
+         * payload length = Total Length - IP Header Length - TCP Header Length
+         */
         packet->payload_length = ntohs(ip_header->tot_len) - ip_header_length - packet->header_length;
     }
     else if(ip_header == NULL && ipv6_header != NULL){
-        //printf("\nip6\n");
+        /* for IPv6
+         * payload length = IPv6 Payload Length - TCP Header Length
+         */
         packet->payload_length = ipv6_header->ip6_plen - packet->header_length;
     }
     
+    //Payload address = Transport Layer Address + TCP Header Length
     packet->payload_addr = ptr + packet->header_length;
     
+    //Check ports for filtering
     int filtering;
 
     if(filter !=0 && packet->src_port != filter && packet->dst_port != filter){
@@ -205,15 +228,25 @@ int decode_TCP(struct tcphdr *tcp_header, struct iphdr *ip_header, struct ip6_hd
     return filtering;
 }
 
+/*
+ * Extracts UDP source/destination port, payload length/address, header length
+ * Checks ports for filtering
+ */
 int decode_UDP(struct udphdr *udp_header, flow *packet, const u_char* ptr, int filter){
+    //Get source/destination ports
     packet->src_port = ntohs(udp_header->source);
     packet->dst_port = ntohs(udp_header->dest);
 
+    //UDP Header length is always 8
     packet->header_length = 8;
+
+    //Payload length = Total Length - UDP Header Length
     packet->payload_length = ntohs(udp_header->len) - packet->header_length;
 
+    //Payload address = Transport layer address + header length
     packet->payload_addr = ptr + packet->header_length;
 
+    //Check ports for filtering
     int filtering;
     if(filter !=0 && packet->src_port != filter && packet->dst_port != filter){
         filtering = 1;
@@ -229,6 +262,9 @@ int decode_UDP(struct udphdr *udp_header, flow *packet, const u_char* ptr, int f
     return filtering;
 }
 
+/*
+ * Starts packet reading/capturing
+ */
 void read_packets(char* device, char * pcap_file, int func, int filter){
     pcap_t *packet_open;
     char errbuf[PCAP_ERRBUF_SIZE];
@@ -251,7 +287,7 @@ void read_packets(char* device, char * pcap_file, int func, int filter){
         exit(EXIT_FAILURE);
     }
 
-    if(pcap_loop(packet_open, 0, packet_handler, (u_char*)&filter) < 0){
+    if(pcap_loop(packet_open, 0, packet_handler, (u_char*)&filter) < 0){ //Repeatedly call packet_handler for all packets
         printf("\npcap_loop() error: %s\n", pcap_geterr(packet_open));
         exit(EXIT_FAILURE);
     }
@@ -260,38 +296,59 @@ void read_packets(char* device, char * pcap_file, int func, int filter){
 
 }
 
+/*
+ * Processes a packet
+ */
 void packet_handler(u_char* user, const struct pcap_pkthdr *header, const u_char *packet){
     stats.total_packets++;
     
+    //Ethernet header
     struct ether_header *eth = (struct ether_header*) packet;
     
     int filter = *((int*)user);
     //printf("\n%d\n", filter);
     
+    //Check IPv4 or IPv6
     if(ntohs(eth->ether_type) == ETHERTYPE_IP){
         
+        //IP Header
         struct iphdr *ip_header = (struct iphdr*)(packet + sizeof(struct ether_header));
         struct ip6_hdr *ipv6_header = NULL;
         
+        //Decode IP Header
         flow *n_packet = decode_IPV4(ip_header);
 
-        int ip_header_length = ip_header->ihl*4;
+        //IHL is internet header length in 32-bit words
+        int ip_header_length = ip_header->ihl*4; //Multiply by 4 to calculate in bytes
+
+        //Transport layer pointer for TCP/UDP decode
         const u_char *transport_ptr = packet + sizeof(struct ether_header)+(ip_header_length);
 
+        //TCP Protocol
         if(n_packet->protocol == 6){
+            //TCP Header
             struct tcphdr* tcp_header = (struct tcphdr *)transport_ptr;
+            
+            //Decode TCP
             int filtering = decode_TCP(tcp_header, ip_header, ipv6_header, ip_header_length, n_packet, transport_ptr, filter);
             
+            //Apply filtering
             if(filtering == 0){
                 print_flow(n_packet, stdout);
                 print_flow(n_packet, fp);
             }
 
         }
+        
+        //UDP Protocol
         if(n_packet->protocol == 17){
+            //UDP Header
             struct udphdr *upd_header= (struct udphdr*)transport_ptr;
+            
+            //Decode UDP
             int filtering = decode_UDP(upd_header, n_packet, transport_ptr, filter);
-            //print_flow(n_packet);
+            
+            //Apply filtering
             if(filtering == 0){
                 print_flow(n_packet, stdout);
                 print_flow(n_packet, fp);
@@ -299,26 +356,39 @@ void packet_handler(u_char* user, const struct pcap_pkthdr *header, const u_char
         }
     }
     if(ntohs(eth->ether_type) == ETHERTYPE_IPV6){
+        
+        //IP6 Header
         struct iphdr *ip_header = NULL;
         struct ip6_hdr *ipv6_header = (struct ip6_hdr*)(packet + sizeof(struct ether_header));
 
+        //Decode IP6 Header
         flow *n_packet = decode_IPV6(ipv6_header);
+        
+        //IP6 header size is always 40
         int ipv6_header_size = 40;
 
+        //Transport layer pointer
         const u_char *transport_ptr = packet + sizeof(struct ether_header)+ ipv6_header_size;
 
         if(n_packet->protocol == 6){
+            //TCP Header
             struct tcphdr* tcp_header = (struct tcphdr *)transport_ptr;
+            
+            //Decode TCP
             int filtering = decode_TCP(tcp_header, ip_header, ipv6_header, ipv6_header_size, n_packet, transport_ptr, filter);
-            //print_flow(n_packet);
+            
+            //Apply filtering
             if(filtering == 0){
                 print_flow(n_packet, stdout);
                 print_flow(n_packet, fp);
             }
         }
         if(n_packet->protocol == 17){
-            struct udphdr *upd_header= (struct udphdr*)transport_ptr;
-            int filtering = decode_UDP(upd_header, n_packet, transport_ptr, filter);
+            //UDP Header
+            struct udphdr *udp_header= (struct udphdr*)transport_ptr;
+
+            //Decode UDP
+            int filtering = decode_UDP(udp_header, n_packet, transport_ptr, filter);
             //print_flow(n_packet);
             if(filtering == 0){
                 print_flow(n_packet, stdout);
@@ -328,6 +398,9 @@ void packet_handler(u_char* user, const struct pcap_pkthdr *header, const u_char
     }
 }
 
+/*
+ * Prints help message
+ */
 void help(){
     printf("Usage: ./pcap_ex [-i interface] [-r pcap_file] [-f filter] [-h]\n");
     printf("  -i  Select network interface (e.g., eth0)\n");
@@ -343,7 +416,7 @@ int main(int argc, char **argv){
 
     int func = -1;
 
-    //Arguements
+    //Arguments
     int c;
     while((c = getopt(argc, argv, "i:r:f:h")) != -1){
         switch(c){
