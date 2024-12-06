@@ -27,7 +27,16 @@ The tool supports `IPv4 / IPv6` `TCP` and `UDP` protocols.
 ## Theoritical Questions
 > 1. Can you tell if an incoming TCP packet is a retransmission? If yes, how? If not, why?
 
+Each time the sender transmits a TCP packet, it starts a timer. After receiving the TCP packet, the receiver responds with an `Acknowledgment (ACK)` that confirms the packet has been received, stops the timer and specifies the next expected sequence. For various reasons packets can get lost before reaching the receiver and, therefore, an ACK is not sent. If the sender does not receive an ACK before the timer goes off, the packet will be **retransmitted**. Sometimes, the receiver may not receive the expected packet and it will resend the last ACK until it gets it. If the sender receives a certain number of duplicate ACKs, it resends the lost packet, before the timer goes off.
+
+In order to identify retransmissions:
+1. Sequence numbers can be compared. If two packets have the same sequence number, without the proper ACKs, it is likely a retransmission. 
+2. Another way would be to check for multiple duplicate ACKs.
+
+
 > 2. Can you tell if an incoming UDP packet is a retransmission? If yes, how? If not, why?
+
+UDP protocol does not provide any information such as sequence or acknowledgment numbers, like TCP, therefore, there is no way to identify retransmissions.
 ## Tool Specification
 
 The tool accepts the following command-line arguements:
